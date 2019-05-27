@@ -21,5 +21,5 @@
     src: "//{{ af_storage_account_name }}.file.core.windows.net/{{ af_share_name }}"
     fstype: "cifs"
     opts: "vers=3.0,username={{ af_storage_account_name }},password={{ af_storage_account_key }},dir_mode=0777,file_mode=0777,serverino"
-    state: mounted
+    state: present
   become: true
