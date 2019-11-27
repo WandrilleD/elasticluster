@@ -341,7 +341,7 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
         """
         template_id = None
         attributes = {}
-        parts = re.split(' *[,+/\n] *', flavor, re.MULTILINE)
+        parts = re.split(' *[,+\n] *', flavor, re.MULTILINE)
         for part in parts:
             if ':' not in part:
                 if template_id is None:

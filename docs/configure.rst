@@ -1136,6 +1136,47 @@ node-level section take precedence over cluster-wide ones.
    e.g. to use fewer resources on the frontend nodes than on the
    compute nodes.
 
+   In *OpenNebula*, the ``flavor=`` line allows specifying the
+   characteristics of a VM in detail -- in fact, ``flavor=`` can
+   override almost any setting of a VM template.
+
+   In the simplest case, you can use an OpenNebula template ID or name
+   as specification of the flavor: ``flavor=20`` and
+   ``flavor=Ubuntu18.04`` are both valid ways of telling ElastiCluster
+   that VMs should be created from a VM template (with no additional
+   modification).
+
+   .. note::
+
+      ElastiCluster will still override the ONE template settings
+      regarding network and disk image with what is specified in the
+      configuration file.  In other words, e.g. if you're using a
+      template named *Ubuntu18.04* but specify an ``image_id``
+      corresponding to a CentOS boot disk, ElastiCluster will start a
+      CentOS VM.
+
+   You can then override any setting in the chosen OpenNebula VM
+   template by appending *key:value* pairs to the template identifier,
+   separated by a comma.  For example,
+   ``flavor=20,cpu:2.0,memory:4096`` will use the template with ID 20
+   as a base but override OpenNebula's CPU and MEMORY options with the
+   values ``2.0`` and ``4096`` respectively.  It is possible to
+   override one value in a vector-value template key (e.g., ``DISK``)
+   by using a dot ``.`` to separate the container name from the
+   attribute name: e.g., ``flavor=Ubuntu18.04,disk.size:8000`` will
+   start a VM off the template named ``Ubuntu18.04`` but ensure that
+   the boot disk is 8000MB large. Consult `OpenNebula VM templates
+   documentation`__ to know what key:value pairs can be specified and
+   what their effect is.
+
+   .. __: http://docs.opennebula.org/5.6/operation/references/template.html
+
+   Finally, you can omit the template specification altogether and
+   just give the minimal set of keys to fully specify a VM.  For
+   instance, ``flavor=cpu:1,vcpu:4,memory:8192,disk.size:20000`` will
+   try to start a VM with 4 virtual CPU slots (mapped to 1 physical
+   CPU), 8GiB of RAM, and 20000MB of disk.
+
 ``image_id``
    Disk image ID to use as a base for all VMs in this cluster
    (unless later overridden for a class of nodes, see below).  Actual
@@ -1151,6 +1192,13 @@ node-level section take precedence over cluster-wide ones.
    * For Google Compute Engine you can also use a URL of a private
      image; run ``gcloud compute images describe
      <your_image_name>``:file: to show the selfLink URL to use.
+
+   * For OpenNebula, you can use either numerical IDs
+     (e.g. ``image_id=20`` to use the image with ID 20), or specify an
+     image name as *username*/*image name* (e.g.,
+     ``image_id=oneadmin/Ubuntu16.04``).  You can omit the
+     ``username/`` prefix in case the image is owned by the user
+     you're connecting to ONE as.
 
    * OpenStack uses UUIDs
      (e.g. `2bf3baba-35c8-4e20-9cc9-b36808720c9b`); use command
