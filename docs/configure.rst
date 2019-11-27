@@ -148,6 +148,7 @@ Currently these cloud providers are available:
 - ``ec2_boto``: supports Amazon EC2 and compatible clouds
 - ``google``: supports Google Compute Engine
 - ``libcloud``: support `many cloud providers`__ through `Apache LibCloud`_
+- ``opennebula``: supports clouds with an OpenNebula_ interface
 - ``openstack``: supports OpenStack-based clouds
 
 .. __: https://libcloud.readthedocs.io/en/latest/supported_providers.html
@@ -157,8 +158,9 @@ section:
 
 ``provider``
 
-    the driver to use to connect to the cloud provider:
-    ``azure``, ``ec2_boto``, ``openstack``, ``google`` or ``libcloud``.
+    the driver to use to connect to the cloud provider: ``azure``,
+    ``ec2_boto``, ``opennebula``, ``openstack``, ``google`` or
+    ``libcloud``.
 
     .. note::
 
@@ -574,6 +576,41 @@ Valid configuration keys for ``openstack``
   need to use more than one to start a whole cluster. Anyway, use of
   anti-affinity groups ensures that the same physical resources are
   shared across the minimum possible amount of VMs.
+
+
+Valid configuration keys for ``opennebula``
+-------------------------------------------
+
+All configuration keys are optional for the OpenNebula provider;
+values are taken from environmental variables if not written in the
+ElastiCluster configuration file.
+
+``endpoint``
+  URL of the OpenNebula XML-RPC server, starting with ``http://`` or
+  ``https://``.  If not given, the value of the environment variable
+  ``ONE_URL`` is used instead; if this environmental variable is
+  unset, the default value ``http://localhost:2633/RPC2`` is used (as
+  of ONE version 5.6.1 this is the default used by command-line
+  utilities like ``onevm``).
+
+``username``
+  User name to use for authenticating to the OpenNebula server.  If
+  not given, the value of the environment variable ``ONE_USERNAME`` is
+  used instead.
+
+``password``
+  Password to use for authenticating to the OpenNebula server.  If
+  not given, the value of the environment variable ``ONE_PASSWORD`` is
+  used instead.
+
+Since all keys are optional, the minimal useful configuration for
+using OpenNebula is the following::
+
+  [cloud/one]
+  provider=opennebula
+
+All the actual settings (URL endpoint, username, password) will be
+taken from the environment.
 
 
 Examples

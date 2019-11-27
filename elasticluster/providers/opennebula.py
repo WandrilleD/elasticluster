@@ -33,7 +33,8 @@ import pyone
 
 from elasticluster.providers import AbstractCloudProvider
 from elasticluster import log
-from elasticluster.exceptions import ConfigurationError, KeypairError, UnsupportedError
+from elasticluster.exceptions import ConfigurationError, InstanceError, KeypairError, UnsupportedError
+from elasticluster.utils import setitem_nested
 
 
 # file metadata, etc.
@@ -165,40 +166,23 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
                        security_group, flavor, image_id, image_userdata,
                        cluster_name, username=None, node_name=None, **options):
 
-        flavor = self._parse_flavor(flavor, {
-            'CPU': 'cpu',
-            'MEMORY': 'memory',
-            '_disksize': 'disksize',
-        })
-
-        template = {
-            'CPU': float(flavor['CPU']),
-            'VCPU': flavor.get('VCPU', flavor['CPU']),
-            'MEMORY': flavor['MEMORY'],
-            # FIXME: `GRAPHICS` does not belong in here
-            'GRAPHICS': {
-                'LISTEN': '0.0.0.0',
-                'TYPE': 'VNC',
-            },
-        }
+        template_id, attributes = self._parse_flavor(flavor)
 
         if node_name:
             # this only sets the VM name for display purposes
-            template['NAME'] = node_name
+            attributes['NAME'] = node_name
 
         # boot disk
-        boot = template['OS'] = {}
-        #boot['ARCH'] = 'x86_64'  # or: 'i686'
-        boot['BOOT'] = '' #'disk0'
+        attributes.setdefault('OS', {})
+        boot = attributes['OS']
+        boot.setdefault('BOOT', '') # FIXME: should this be 'disk0'?
 
-        disks = template['DISK'] = []
-        # disk0 is always the boot disk
+        attributes.setdefault('DISK', {})
+        disk0 = attributes['DISK']
         try:
             # `image_id` is numeric
             image_id = int(image_id)
-            disks.append({
-                'IMAGE_ID': image_id,
-            })
+            disk0['IMAGE_ID'] = image_id
         except (TypeError, ValueError):
             # `image_id` is the disk image name
             if '/' in image_id:
@@ -206,13 +190,13 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
             else:
                 img_username = self._username
                 img_id = image_id
-            disks.append({
-                'IMAGE': img_id,
-                'IMAGE_UNAME': img_username,
-            })
-        disks[0].setdefault('SIZE', flavor['_disksize'])
+            disk0['IMAGE'] = img_id
+            disk0['IMAGE_UNAME'] = img_username
 
-        nics = template['NIC'] = []
+        # not attempting to merge flavor attributes into the `NIC`
+        # part: network configuration should be part of either the ONE
+        # template, or the ElastiCluster configuration
+        nics = attributes['NIC'] = []
         network_ids = [
             netid.strip()
             for netid in options.pop('network_ids', '').split(',')
@@ -237,13 +221,13 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
                         'NETWORK_UNAME': net_username,
                     })
                 if security_group and security_group != 'default':
-                    nics['SECURITY_GROUP'] = security_group
+                    nics[-1]['SECURITY_GROUP'] = security_group
 
-        context = template['CONTEXT'] = {
-            # this is needed to enable networking; having the `NIC`
-            # lines in template seems not to be enough in ONE 5.6.1
-            'NETWORK': 'YES',
-        }
+        attributes.setdefault('CONTEXT', {})
+        context = attributes['CONTEXT']
+        # this is needed to enable networking; having the `NIC`
+        # lines in template seems not to be enough in ONE 5.6.1
+        context['NETWORK'] = 'YES'
         if node_name:
             context['SET_HOSTNAME'] = node_name
         if username:
@@ -258,7 +242,13 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
         # create VM
         with self._api_lock:
             try:
-                vm_id = self.server.vm.allocate(self._make_template_str(template), False)
+                if template_id is not None:
+                    vm_id = self.server.template.instantiate(
+                        template_id, (node_name or ''), False,
+                        self._make_template_str(attributes))
+                else:
+                    vm_id = self.server.vm.allocate(
+                        self._make_template_str(attributes), False)
                 return { 'instance_id': vm_id }
             except pyone.OneException as err:
                 raise InstanceError(
@@ -271,22 +261,21 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
         Convert an attribute dictionary into a ``KEY=value`` ONE template string.
         """
         # check that mandatory parameters are given
-        assert 'CPU' in template
-        assert 'MEMORY' in template
+        #assert 'CPU' in template
+        #assert 'MEMORY' in template
         assert 'OS' in template
         #assert 'ARCH' in template['OS']
         assert 'BOOT' in template['OS']
         assert 'DISK' in template
-        assert len(template['DISK']) > 0
-        assert ('IMAGE' in template['DISK'][0] or 'IMAGE_ID' in template['DISK'][0])
-        assert 'SIZE' in template['DISK'][0]
+        assert ('IMAGE' in template['DISK'] or 'IMAGE_ID' in template['DISK'])
+        assert 'SIZE' in template['DISK']
         assert 'NIC' in template
         assert len(template['NIC']) > 0
         assert ('NETWORK' in template['NIC'][0] or 'NETWORK_ID' in template['NIC'][0])
 
         parts = []
         for key, value in template.items():
-            if key in ['DISK', 'NIC']:
+            if key in ['NIC']:
                 # by construction, these items are lists
                 for item in template[key]:
                     parts.append(
@@ -346,45 +335,76 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
         return (vm.STATE == self.VM_STATES['ACTIVE']
                 and vm.LCM_STATE == self.LCM_STATES['RUNNING'])
 
-    @staticmethod
-    def _parse_flavor(flavor, required):
+    def _parse_flavor(self, flavor):
         """
         Parse a flavor string into OpenNebula's `CPU=...` and `MEMORY=...` values.
         """
-        result = {}
-        parts = re.split('[, +-] *', flavor)
+        template_id = None
+        attributes = {}
+        parts = re.split(' *[,+/\n] *', flavor, re.MULTILINE)
         for part in parts:
-            try:
-                key, value = re.split('[:=]', part)
-                key = key.lower()
-                if key in ['cpu', 'vcpu']:
-                    result['CPU'] = int(value)
-                elif key in ['mem', 'memory']:
-                    result['MEMORY'] = int(value)
-                elif key in ['disk', 'disksize']:
-                    result['_disksize'] = int(value)
-                elif key == 'template':
-                    result['_template'] = str(value)
+            if ':' not in part:
+                if template_id is None:
+                    template_id = self._parse_template(part)
                 else:
                     raise ConfigurationError(
-                        "Unknown key `{key}`"
-                        " in flavor specification `{flavor}`"
-                        .format(key=key, flavor=flavor)
-                    )
-            except ValueError:
-                raise ConfigurationError(
-                    "Cannot interpret flavor string `{flavor}`;"
-                    " should contain CPU number and memory allocation"
-                    " in the form e.g. `cpu:4,memory:4000`"
-                    .format(flavor=flavor))
-        for dest, src in required.items():
-            if dest not in result:
-                raise ConfigurationError(
-                    "Missing required parameter `{0}:`"
-                    " in flavor specification `{1}`"
-                    .format(src, flavor)
-                )
-        return result
+                        "Template ID or name given twice in flavor spec `{0}`"
+                        .format(flavor))
+            else:
+                key, value = part.split(':')
+                key = key.upper()
+                if key == 'TEMPLATE':
+                    if template_id is None:
+                        template_id = self._parse_template(part)
+                    else:
+                        raise ConfigurationError(
+                            "Template ID or name given twice in flavor spec `{0}`"
+                            .format(flavor))
+                else:
+                    keys = key.split('.')
+                    setitem_nested(attributes, keys, value)
+
+        # one of the two should have been filled by now
+        assert template_id or attributes
+
+        return template_id, attributes
+
+    def _parse_template(self, spec):
+        """
+        Return ONE template ID associated with `spec`.
+
+        Argument `spec` can be an integer, which is interpreted as a
+        template ID and returned unchanged, or an arbitrary string,
+        which is looked up as a template name in the configured ONE
+        server.
+        """
+        try:
+            # allow e.g. `flavor = 20` to just select the
+            # template with ID 20
+            return int(spec)
+        except (TypeError, ValueError):
+            # else interpret value as a template name
+            return self._find_template_by_name(spec)
+
+    def _find_template_by_name(self, name):
+        """
+        Return ID of template whose name is exactly *name*.
+        """
+        with self._api_lock:
+            templates = self.server.templatepool.info(
+                -1, # Connected user's and his group's resources
+                -1, # range start, use -1 for "no restriction"
+                -1, # range end, use -1 for "no restriction"
+            )
+            # FIXME: I'm unsure whether accessing attributes of
+            # `template` can trigger a transparent XML-RPC call... for
+            # safety, run this loop while holding the API lock.
+            for template in templates.VMTEMPLATE:
+                if template.NAME == name:
+                    return template.ID
+        raise ConfigurationError(
+            "No VM template found by the name `{0}`"
+            .format(name))
 
     def stop_instance(self, node):
         """
