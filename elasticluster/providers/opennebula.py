@@ -54,7 +54,9 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
 
     :param str username:
     :param str password:
-       Authentication information, in the form ``username:password``.
+       Authentication information.  If omitted, try to read it from
+       the file specified by the environment variable ``ONE_AUTH``,
+       or OpenNebula's default ``~/.one/one_auth``.
     """
 
     _api_lock = threading.Lock()
@@ -139,10 +141,35 @@ class OpenNebulaCloudProvider(AbstractCloudProvider):
 
     def __init__(self, endpoint, username, password, storage_path=None):
         self._endpoint = endpoint
-        self._username = username
-        self._password = password
+        if username:
+            self._username = username
+            self._password = password
+        else:
+            self._username, self._password = self._read_one_auth()
         self._server = None
         self.storage_path = storage_path
+
+    @staticmethod
+    def _read_one_auth():
+        """
+        Read username and password from the ONE auth file,
+        or raise `ConfigurationError` if it cannot be found.
+        """
+        one_auth_file = os.environ.get(
+            'ONE_AUTH', os.path.expanduser('~/.one/one_auth'))
+        try:
+            with open(one_auth_file) as one_auth:
+                auth = one_auth.read().strip()
+                username, password = auth.split(':')
+            return username, password
+        except IOError:
+            raise ConfigurationError(
+                "Cannot read ONE auth file `{0}`."
+                .format(one_auth_file))
+        except ValueError:
+            raise ConfigurationError(
+                "Cannot parse contents of file `{0}` as username:password pair."
+                .format(one_auth_file))
 
     def to_vars_dict(self):
         """

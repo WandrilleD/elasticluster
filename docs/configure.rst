@@ -596,7 +596,10 @@ ElastiCluster configuration file.
 ``username``
   User name to use for authenticating to the OpenNebula server.  If
   not given, the value of the environment variable ``ONE_USERNAME`` is
-  used instead.
+  used instead.  If that enviromental variable is unset or the empty
+  string, then read the *username:password* pair from the file pointed
+  to by env. var. ``ONE_AUTH`` or from OpenNebula's default
+  ``~/.one/one_auth``.
 
 ``password``
   Password to use for authenticating to the OpenNebula server.  If
